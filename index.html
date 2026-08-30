@@ -324,6 +324,109 @@ function normalize(s){
 }
 function save(){
   try{ localStorage.setItem(KEY,JSON.stringify(S)); }catch(e){}
+  if(!FB.adopting) fbPush();
+}
+
+/* ===================== FIREBASE LIVE SYNC (REST, no SDK) ===================== */
+var FB={
+  apiKey:"AIzaSyApc4VWnN62psNHqsBPEPyvrObonw254j4",
+  db:"https://bshs-live-trackers-default-rtdb.asia-southeast1.firebasedatabase.app",
+  path:"/mlbb",
+  email:"tracker.operator@bshs.edu.ph",
+  token:null, refresh:null, tokenAt:0, op:false, adopting:false,
+  lastSeen:0, lastWrite:0, etag:null, live:false, timer:null
+};
+function fbGet(){ return S; }
+function fbSet(d){ S=normalize(d); }
+function fbSignIn(pw){
+  return fetch("https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key="+FB.apiKey,
+    {method:"POST",headers:{"Content-Type":"application/json"},
+     body:JSON.stringify({email:FB.email,password:pw,returnSecureToken:true})})
+    .then(function(r){ return r.json(); }).then(function(d){
+      if(d.idToken){ FB.token=d.idToken; FB.refresh=d.refreshToken; FB.tokenAt=Date.now(); FB.op=true;
+        try{ localStorage.setItem(FB.path+"_fb", JSON.stringify({token:FB.token,refresh:FB.refresh,tokenAt:FB.tokenAt})); }catch(e){}
+        fbPaint(); return true; }
+      return false;
+    }).catch(function(){ return false; });
+}
+function fbRefresh(){
+  if(!FB.refresh) return Promise.resolve(false);
+  return fetch("https://securetoken.googleapis.com/v1/token?key="+FB.apiKey,
+    {method:"POST",headers:{"Content-Type":"application/json"},
+     body:JSON.stringify({grant_type:"refresh_token",refresh_token:FB.refresh})})
+    .then(function(r){ return r.json(); }).then(function(d){
+      if(d.id_token){ FB.token=d.id_token; FB.tokenAt=Date.now();
+        try{ localStorage.setItem(FB.path+"_fb", JSON.stringify({token:FB.token,refresh:FB.refresh,tokenAt:FB.tokenAt})); }catch(e){}
+        return true; }
+      return false;
+    }).catch(function(){ return false; });
+}
+function fbRestore(){
+  try{ var raw=localStorage.getItem(FB.path+"_fb"); if(raw){ var d=JSON.parse(raw); FB.token=d.token; FB.refresh=d.refresh; FB.tokenAt=d.tokenAt||0; FB.op=!!d.token; } }catch(e){}
+}
+function fbRead(){
+  var h={};
+  if(FB.etag) h["If-None-Match"]=FB.etag;
+  return fetch(FB.db+FB.path+".json",{headers:h}).then(function(r){
+    if(r.status===304) return {changed:false};
+    FB.etag=r.headers.get("ETag");
+    return r.json().then(function(j){ return {changed:true,data:j}; });
+  }).catch(function(){ return null; });
+}
+function fbPush(){
+  if(FB.adopting||!FB.op||!FB.token) return Promise.resolve(false);
+  function doPush(){
+    var body={ts:Date.now(),data:fbGet()};
+    return fetch(FB.db+FB.path+".json?auth="+FB.token,
+      {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
+      .then(function(r){
+        if(r.ok){ FB.lastSeen=body.ts; FB.lastWrite=body.ts; return true; }
+        if(r.status===401) return fbRefresh().then(function(ok){ return ok?doPush():false; });
+        return false;
+      }).catch(function(){ return false; });
+  }
+  return doPush();
+}
+function fbAdopt(remote){
+  if(!remote||!remote.data) return;
+  if(remote.ts<=FB.lastSeen) return;
+  if(remote.ts<=FB.lastWrite) return;
+  FB.lastSeen=remote.ts;
+  FB.adopting=true;
+  fbSet(remote.data);
+  render();
+  FB.adopting=false;
+}
+function fbPoll(){
+  fbRead().then(function(r){
+    FB.live = (r!==null);
+    if(r && r.changed) fbAdopt(r.data);
+    fbPaint();
+  });
+}
+function fbStart(){
+  fbRestore();
+  fbUI();
+  fbPoll();
+  FB.timer=setInterval(fbPoll,3000);
+}
+function fbUI(){
+  var d=document.createElement("div");
+  d.id="fbCtl";
+  d.style.cssText="position:fixed;bottom:8px;right:8px;z-index:99999;display:flex;align-items:center;gap:6px;font:12px/1.2 system-ui,sans-serif;";
+  d.innerHTML='<button id="fbOp" style="border:1px solid #999;background:#fff;border-radius:6px;padding:4px 10px;cursor:pointer;font:inherit;">🔒 Operator</button><span id="fbSt" style="background:#f1f3f4;border-radius:6px;padding:4px 8px;color:#555;">…</span>';
+  document.body.appendChild(d);
+  document.getElementById("fbOp").onclick=function(){
+    if(FB.op){ FB.op=false; FB.token=null; try{ localStorage.removeItem(FB.path+"_fb"); }catch(e){} fbPaint(); return; }
+    var pw=prompt("Operator password:"); if(pw===null) return;
+    fbSignIn(pw).then(function(ok){ if(!ok) alert("Sign-in failed — check the operator password."); });
+  };
+  fbPaint();
+}
+function fbPaint(){
+  var op=document.getElementById("fbOp"), st=document.getElementById("fbSt");
+  if(op) op.textContent = FB.op ? "🔓 Operator" : "🔒 Operator";
+  if(st) st.textContent = FB.live ? (FB.op?"● Live":"● Sync") : "○ Offline";
 }
 
 function exportState(){
@@ -1219,6 +1322,7 @@ function afterRender(ph){
 wireBracketControls();
 render();
 FX.start();
+fbStart();
 })();
 </script>
 </body>
