@@ -427,6 +427,11 @@ function fbUI(){
       fbSignIn(pw).then(function(ok){ if(!ok) alert("Sign-in failed — check the operator password."); });
     };
     document.title=(document.title||"")+" · OPERATOR";
+  } else {
+    var st=document.createElement("style");
+    st.textContent="html.fb-viewer input{pointer-events:none;background:#f7f7f7;} html.fb-viewer #undoBtn,html.fb-viewer #resetBtn,html.fb-viewer #demoBtn,html.fb-viewer #exportBtn,html.fb-viewer #importBtn,html.fb-viewer #startBtn,html.fb-viewer #redrawBtn{display:none;}";
+    document.head.appendChild(st);
+    document.documentElement.classList.add("fb-viewer");
   }
   fbPaint();
 }
@@ -462,6 +467,7 @@ function pushHistory(){
   $("undoBtn").disabled = history.length===0;
 }
 function undo(){
+  if(!IS_OP) return;
   if(!history.length) return;
   S=normalize(JSON.parse(history.pop()));
   $("undoBtn").disabled = history.length===0;
@@ -628,6 +634,7 @@ function seeds(){
 function seriesNeed(bo){ return bo==="Bo5"?3:2; }
 function initScore(m){ if(!m.score) m.score={a:0,b:0}; return m.score; }
 function scoreGame(m,id,need){
+  if(!IS_OP) return;
   if(m.winner) return;
   pushHistory();
   var sc=initScore(m);
@@ -639,6 +646,7 @@ function scoreGame(m,id,need){
   render(); save();
 }
 function pick(m,winnerId){
+  if(!IS_OP) return;
   if(m.winner) return;
   pushHistory();
   m.winner=winnerId;
