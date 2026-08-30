@@ -336,6 +336,7 @@ var FB={
   token:null, refresh:null, tokenAt:0, op:false, adopting:false,
   lastSeen:0, lastWrite:0, etag:null, live:false, timer:null
 };
+var IS_OP=/\bop=1\b/.test(location.search);
 function fbGet(){ return S; }
 function fbSet(d){ S=normalize(d); }
 function fbSignIn(pw){
@@ -362,6 +363,7 @@ function fbRefresh(){
     }).catch(function(){ return false; });
 }
 function fbRestore(){
+  if(!IS_OP) return;
   try{ var raw=localStorage.getItem(FB.path+"_fb"); if(raw){ var d=JSON.parse(raw); FB.token=d.token; FB.refresh=d.refresh; FB.tokenAt=d.tokenAt||0; FB.op=!!d.token; } }catch(e){}
 }
 function fbRead(){
@@ -374,7 +376,7 @@ function fbRead(){
   }).catch(function(){ return null; });
 }
 function fbPush(){
-  if(FB.adopting||!FB.op||!FB.token) return Promise.resolve(false);
+  if(FB.adopting||!IS_OP||!FB.op||!FB.token) return Promise.resolve(false);
   function doPush(){
     var body={ts:Date.now(),data:fbGet()};
     return fetch(FB.db+FB.path+".json?auth="+FB.token,
@@ -414,13 +416,18 @@ function fbUI(){
   var d=document.createElement("div");
   d.id="fbCtl";
   d.style.cssText="position:fixed;bottom:8px;right:8px;z-index:99999;display:flex;align-items:center;gap:6px;font:12px/1.2 system-ui,sans-serif;";
-  d.innerHTML='<button id="fbOp" style="border:1px solid #999;background:#fff;border-radius:6px;padding:4px 10px;cursor:pointer;font:inherit;">🔒 Operator</button><span id="fbSt" style="background:#f1f3f4;border-radius:6px;padding:4px 8px;color:#555;">…</span>';
+  d.innerHTML = IS_OP
+    ? '<button id="fbOp" style="border:1px solid #999;background:#fff;border-radius:6px;padding:4px 10px;cursor:pointer;font:inherit;">🔒 Operator</button><span id="fbSt" style="background:#f1f3f4;border-radius:6px;padding:4px 8px;color:#555;">…</span>'
+    : '<span id="fbSt" style="background:#f1f3f4;border-radius:6px;padding:4px 8px;color:#555;">…</span>';
   document.body.appendChild(d);
-  document.getElementById("fbOp").onclick=function(){
-    if(FB.op){ FB.op=false; FB.token=null; try{ localStorage.removeItem(FB.path+"_fb"); }catch(e){} fbPaint(); return; }
-    var pw=prompt("Operator password:"); if(pw===null) return;
-    fbSignIn(pw).then(function(ok){ if(!ok) alert("Sign-in failed — check the operator password."); });
-  };
+  if(IS_OP){
+    document.getElementById("fbOp").onclick=function(){
+      if(FB.op){ FB.op=false; FB.token=null; try{ localStorage.removeItem(FB.path+"_fb"); }catch(e){} fbPaint(); return; }
+      var pw=prompt("Operator password:"); if(pw===null) return;
+      fbSignIn(pw).then(function(ok){ if(!ok) alert("Sign-in failed — check the operator password."); });
+    };
+    document.title=(document.title||"")+" · OPERATOR";
+  }
   fbPaint();
 }
 function fbPaint(){
