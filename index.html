@@ -336,7 +336,7 @@ var FB={
   token:null, refresh:null, tokenAt:0, op:false, adopting:false,
   lastSeen:0, lastWrite:0, etag:null, live:false, timer:null
 };
-var IS_OP=/\bop=1\b/.test(location.search);
+var IS_OP=/(^|[?&#])op=(1|yes|true|on)(&|$)/i.test(location.search+location.hash)||/(^|[?&#])operator(&|$)/i.test(location.search+location.hash);
 function fbGet(){ return S; }
 function fbSet(d){ S=normalize(d); }
 function fbSignIn(pw){
