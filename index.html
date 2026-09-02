@@ -613,51 +613,22 @@ function phase(){
 }
 function bubbleNeeded(){
   var st=standings();
-  var w4=st.R.w[st.arr[3].id];
-  // the last berth is contested if ANY team adjacent to the cut shares 4th's
-  // record: 5th tied with 4th (classic 2-way), or a 3rd (or higher) tied with
-  // 4th inside the same record band (4-way at the top of the band, e.g. S5/S7)
-  return st.R.w[st.arr[2].id]===w4 || st.R.w[st.arr[4].id]===w4;
-}
-function bubblePair(){
-  // PRIMARY: cut-line fight rank4 vs rank5 (the last berth decided by play).
-  // FALLBACK: cut NOT tied but rank3 ties rank4's record (S5/S7: whole top band
-  // 2-1) → ranks 3v4 fight for seeding; both already qualified.
-  var st=standings();
-  if(st.R.w[st.arr[3].id]===st.R.w[st.arr[4].id]) return [st.arr[3].id, st.arr[4].id];
-  if(st.R.w[st.arr[2].id]===st.R.w[st.arr[3].id]) return [st.arr[2].id, st.arr[3].id];
-  return [st.arr[3].id, st.arr[4].id];
-}
-// "seed" = fight happens INSIDE the qualified four (Seed 3 vs 4);
-// "qual" = fight decides the last berth (4th vs 5th); null = no fight
-function bubbleKind(){
-  var st=standings();
-  if(st.R.w[st.arr[3].id]===st.R.w[st.arr[4].id]) return "qual";
-  if(st.R.w[st.arr[2].id]===st.R.w[st.arr[3].id]) return "seed";
-  return null;
+  return st.R.w[st.arr[3].id]===st.R.w[st.arr[4].id];
 }
 function ensureBubble(){
   if(!roundsDone()) return;
   if(S.bubble && S.bubble.winner) return;
-  var pair=bubblePair();
+  var st=standings();
+  var a=st.arr[3].id,b=st.arr[4].id;
   if(bubbleNeeded()){
-    if(!S.bubble) S.bubble={a:pair[0],b:pair[1],winner:null};
-    else if(!S.bubble.winner){ S.bubble.a=pair[0]; S.bubble.b=pair[1]; }
+    if(!S.bubble) S.bubble={a:a,b:b,winner:null};
+    else if(!S.bubble.winner){ S.bubble.a=a; S.bubble.b=b; }
   }
 }
 function seeds(){
   var st=standings();
-  var w3=st.R.w[st.arr[2].id], w4=st.R.w[st.arr[3].id];
-  var seed=[st.arr[0].id,st.arr[1].id];
-  if(S.bubble&&S.bubble.winner){
-    if(w3===w4){ // seeding bubble (both already through): winner Seed 3, loser Seed 4
-      seed.push(S.bubble.winner, loser(S.bubble));
-    } else {     // qualification bubble (4th vs 5th): winner takes the last berth
-      seed.push(st.arr[2].id, S.bubble.winner);
-    }
-  } else {
-    seed.push(st.arr[2].id, st.arr[3].id);
-  }
+  var seed=[st.arr[0].id,st.arr[1].id,st.arr[2].id];
+  seed.push(S.bubble&&S.bubble.winner?S.bubble.winner:st.arr[3].id);
   return seed;
 }
 
@@ -754,7 +725,7 @@ function renderBanner(ph){
   if(ph==="r1") $("banner").innerHTML="<b>Round 1</b> — cross-pool draw. Click a team to win each match.";
   else if(ph==="r2") $("banner").innerHTML="<b>Round 2</b> — auto-paired by record pool (Buchholz tiebreak). Click winners.";
   else if(ph==="r3") $("banner").innerHTML="<b>Round 3</b> — leaders vs strongest 1-1, tail vs weakest 1-1 (duration-seeded). Click winners.";
-  else if(ph==="bubble") $("banner").innerHTML="<b>Bubble Qualifier</b> — "+teamName(S.bubble.a)+" and "+teamName(S.bubble.b)+(bubbleKind()==="seed"?" tied in the qualified four → fight for <b>Seed 3</b>. ":"tied for the last berth. ")+"Best-of-3.";
+  else if(ph==="bubble") $("banner").innerHTML="<b>Bubble Qualifier</b> — "+teamName(S.bubble.a)+" and "+teamName(S.bubble.b)+" tied for the last berth. Best-of-3.";
   else if(ph==="playoffs") $("banner").innerHTML="<b>Playoffs</b> — double elimination. Top 3 seeds locked; click winners through both brackets. Bo3 series, Bo5 Grand Final.";
 }
 function renderRounds(ph){
@@ -881,8 +852,8 @@ function renderStandings(){
   }
   hold.innerHTML=""; hold.appendChild(tbl);
   var hint=$("standHint");
-  if(S.bubble&&!S.bubble.winner) hint.innerHTML=bubbleKind()==="seed"?"Tie inside the qualified four → <b>Bubble Qualifier</b> for Seed 3 (both advance).":"4th &amp; 5th tied on points → <b>Bubble Qualifier</b> for Seed 4.";
-  else if(S.bubble&&S.bubble.winner) hint.innerHTML=bubbleKind()==="seed"?"Seeds 1–2 locked. Seed 3 = Bubble winner, Seed 4 = Bubble loser.":"Seeds 1–3 locked. Seed 4 = Bubble winner.";
+  if(S.bubble&&!S.bubble.winner) hint.innerHTML="4th &amp; 5th tied on points → <b>Bubble Qualifier</b> for Seed 4.";
+  else if(S.bubble&&S.bubble.winner) hint.innerHTML="Seeds 1–3 locked. Seed 4 = Bubble winner.";
   else hint.innerHTML="Seeds 1–3 locked. Seed 4 from standings.";
 }
 function renderBubble(){
@@ -892,7 +863,7 @@ function renderBubble(){
     var bsc=initScore(S.bubble);
     hold.innerHTML='<div class="match done"><div class="row"><button class="tm win">'+teamName(S.bubble.winner)+
       '</button><div class="score final">'+bsc.a+' – '+bsc.b+'</div><button class="tm">'+teamName(S.bubble.winner===S.bubble.a?S.bubble.b:S.bubble.a)+
-      '</button></div><div class="meta">'+teamName(S.bubble.winner)+' earns '+(bubbleKind()==="seed"?"Seed 3":"Seed 4")+' · '+bsc.a+'–'+bsc.b+'</div></div>';
+      '</button></div><div class="meta">'+teamName(S.bubble.winner)+' earns Seed 4 · '+bsc.a+'–'+bsc.b+'</div></div>';
     return;
   }
   hold.innerHTML=""; hold.appendChild(seriesEl(S.bubble,"Bo3"));
@@ -1412,8 +1383,6 @@ window.__tracker={
   getState:function(){return S;},
   setState:function(x){S=normalize(x);},
   swissPairs:swissPairs, records:records, netEff:netEff, standings:standings,
-  ensureBubble:ensureBubble, bubbleNeeded:bubbleNeeded, bubblePair:bubblePair,
-  seeds:seeds, phase:phase,
   render:render, parseDur:parseDur, fmtDur:fmtDur
 };
 })();
