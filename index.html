@@ -317,6 +317,8 @@ function normalize(s){
   f.started=!!s.started;
   f.teams=s.teams;
   f.matches=(s.matches&&{1:s.matches[1]||[],2:s.matches[2]||[],3:s.matches[3]||[]})||f.matches;
+  // carry per-match game duration (seconds) through restores
+  for(var r=1;r<=3;r++) (f.matches[r]||[]).forEach(function(m){ if(m&&m.dur) m.dur=+m.dur; });
   f.bubble=s.bubble||null;
   f.play=s.play||f.play;
   f.champ = (f.play.gf && f.play.gf.winner) ? f.play.gf.winner : (s.champ||null);
@@ -522,62 +524,25 @@ function roundsDone(){
   return true;
 }
 
-// ---------- swiss pairing (record pools + rematch avoidance) ----------
-// matchPool: perfect-match an even list of team ids into pairs, minimizing
-// rematches first, then preferring a top-vs-bottom Buchholz spread (Swiss fold).
-// If the list has odd length, leaves out ONE floater (the best choice by score).
-function matchPool(ids,R){
-  function solve(list){
-    var best=null,bestScore=Infinity;
-    (function rec(rem,acc){
-      if(rem.length===0){
-        var rematches=0,diffSum=0;
-        acc.forEach(function(pr){
-          if(R.opp[pr[0]].indexOf(pr[1])>=0) rematches++;
-          diffSum+=Math.abs(buch(pr[0],R)-buch(pr[1],R));
-        });
-        var total=rematches*1000 - diffSum;
-        if(total<bestScore){ bestScore=total; best=acc.slice(); }
-        return;
-      }
-      var a=rem[0];
-      for(var i=1;i<rem.length;i++){
-        var b=rem[i];
-        var nrem=rem.filter(function(x,j){ return j!==0 && j!==i; });
-        rec(nrem, acc.concat([[a,b]]));
-      }
-    })(list,[]);
-    return best;
-  }
-  if(ids.length%2===0) return {pairs:solve(ids), floater:[]};
-  // odd: try leaving each team out, keep the arrangement with fewest rematches
-  var bestF=null,bestFP=null,bestFS=Infinity;
-  ids.forEach(function(fl){
-    var rest=ids.filter(function(x,j){return j!==ids.indexOf(fl) && x!==fl;});
-    // compute score for the floater choice
-    var arr=rest;
-    var best=null,bestScore=Infinity;
-    (function rec(rem,acc){
-      if(rem.length===0){
-        var rematches=0,diffSum=0;
-        acc.forEach(function(pr){
-          if(R.opp[pr[0]].indexOf(pr[1])>=0) rematches++;
-          diffSum+=Math.abs(buch(pr[0],R)-buch(pr[1],R));
-        });
-        var total=rematches*1000-diffSum;
-        if(total<bestScore){bestScore=total;best=acc.slice();}
-        return;
-      }
-      var a=rem[0];
-      for(var i=1;i<rem.length;i++){
-        var b=rem[i];
-        var nrem=rem.filter(function(x,j){return j!==0&&j!==i;});
-        rec(nrem,acc.concat([[a,b]]));
-      }
-    })(arr,[]);
-    if(bestScore<bestFS){bestFS=bestScore;bestFP=best;bestF=fl;}
+// ---------- swiss pairing (record bands + duration strength + float rules) ----------
+// RC's rule (hotfix 2026-09-02):
+//   * Strength inside a record band: net time efficiency = total(loss durations)
+//     - total(win durations), in seconds. Faster win = better, slower loss = better.
+//     Higher netEff = stronger team.
+//   * If the TOP band has an odd count, its weakest member floats and must play
+//     the STRONGEST eligible (no-rematch) team of the next band.
+//     Mirror-image: the 0-2 tail ends up against the weakest eligible 1-1 the
+//     cascade leaves behind.
+//   * The rest pair to minimize record gap, then rematch-free (hard), then
+//     tightest fold. Backtracking search over the remainder (N is tiny).
+function netEff(id){
+  var winT=0,lossT=0;
+  for(var r=1;r<=3;r++)(S.matches[r]||[]).forEach(function(m){
+    if(!m.winner||!m.dur) return;
+    if(m.winner===id) winT+=m.dur;
+    else if(m.a===id||m.b===id) lossT+=m.dur;
   });
-  return {pairs:bestFP, floater:[bestF]};
+  return lossT-winT; // higher = stronger (slow loss, fast win)
 }
 
 function swissPairs(){
@@ -585,16 +550,46 @@ function swissPairs(){
   var byPts={};
   S.teams.forEach(function(t){ var p=R.w[t.id]; (byPts[p]=byPts[p]||[]).push(t.id); });
   var pts=Object.keys(byPts).map(Number).sort(function(a,b){return b-a;});
-  function cmp(x,y){ return (buch(y,R)-buch(x,R))||(R.opp[x].length-R.opp[y].length)||(orderIdx(y)-orderIdx(x)); }
-  var pairs=[],floater=[];
-  pts.forEach(function(p){
-    var pool=byPts[p].slice().sort(cmp);
-    var ids=floater.concat(pool);
-    var res=matchPool(ids,R);
-    pairs=pairs.concat(res.pairs);
-    floater=res.floater;
-  });
-  if(floater.length===2) pairs.push([floater[0],floater[1]]);
+  function canPlay(a,b){ return R.opp[a].indexOf(b)<0; }
+  // strongest first within a band: netEff desc, then buch desc, then seed order
+  function cmpStr(a,b){ return (netEff(b)-netEff(a))||(buch(b,R)-buch(a,R))||(orderIdx(a)-orderIdx(b)); }
+  var band=pts.map(function(p){ return byPts[p].slice().sort(cmpStr); });
+
+  var pairs=[],taken={};
+  // 1) odd top band: weakest leader floats down to strongest eligible of next band
+  if(band.length>=2 && band[0].length%2===1){
+    var floater=band[0][band[0].length-1];   // weakest of the leaders
+    var nextPool=band[1].filter(function(x){return !taken[x] && canPlay(floater,x);});
+    if(nextPool.length){                       // nextPool already sorted strongest-first
+      pairs.push([floater,nextPool[0]]);
+      taken[floater]=1; taken[nextPool[0]]=1;
+    }
+  }
+  // 2) remainder: perfect matching — rematches are penalized hard, then record
+  //    gap minimized, then within-band pairs fold strongest-vs-weakest.
+  var remain=S.teams.map(function(t){return t.id;}).filter(function(id){return !taken[id];});
+  var best=null,bestScore=Infinity;
+  (function rec(rem,acc){
+    if(rem.length===0){
+      var sc=0;
+      acc.forEach(function(pr){
+        var gap=Math.abs(R.w[pr[0]]-R.w[pr[1]]);
+        var rm=R.opp[pr[0]].indexOf(pr[1])>=0?1:0;
+        sc+=rm*100000+gap*1000;
+        if(gap===0&&!rm){ // same band: prefer the wider strength spread (Swiss fold)
+          sc+=500-Math.min(Math.abs(netEff(pr[0])-netEff(pr[1])),500);
+        }
+      });
+      if(sc<bestScore){bestScore=sc;best=acc.slice();}
+      return;
+    }
+    var a=rem[0];
+    for(var i=1;i<rem.length;i++){
+      var b=rem[i];
+      rec(rem.filter(function(x,j){return j!==0&&j!==i;}),acc.concat([[a,b]]));
+    }
+  })(remain,[]);
+  if(best)pairs=pairs.concat(best);
   return pairs;
 }
 
@@ -720,7 +715,7 @@ function renderSetup(){
 function renderBanner(ph){
   if(ph==="r1") $("banner").innerHTML="<b>Round 1</b> — cross-pool draw. Click a team to win each match.";
   else if(ph==="r2") $("banner").innerHTML="<b>Round 2</b> — auto-paired by record pool (Buchholz tiebreak). Click winners.";
-  else if(ph==="r3") $("banner").innerHTML="<b>Round 3</b> — auto-paired by record pool. Click winners.";
+  else if(ph==="r3") $("banner").innerHTML="<b>Round 3</b> — leaders vs strongest 1-1, tail vs weakest 1-1 (duration-seeded). Click winners.";
   else if(ph==="bubble") $("banner").innerHTML="<b>Bubble Qualifier</b> — "+teamName(S.bubble.a)+" and "+teamName(S.bubble.b)+" tied for the last berth. Best-of-3.";
   else if(ph==="playoffs") $("banner").innerHTML="<b>Playoffs</b> — double elimination. Top 3 seeds locked; click winners through both brackets. Bo3 series, Bo5 Grand Final.";
 }
@@ -742,16 +737,40 @@ function renderRounds(ph){
           list=S.matches[r]=swissPairs().map(function(p){return {a:p[0],b:p[1],winner:null};});
         }
       }
+    } else if(r>1 && !list.some(function(m){return m.winner;})){
+      // stale unscored pairing (algorithm fix / undo): re-pair from scratch
+      var prev2=S.matches[r-1]||[];
+      var complete2 = prev2.length>0 && prev2.every(function(m){return m.winner;});
+      if(complete2){
+        var want={}; swissPairs().forEach(function(p){ want[[p[0],p[1]].sort().join("-")]=1; });
+        var fresh=Object.keys(want).length===list.length && list.every(function(m){ return want[[m.a,m.b].sort().join("-")]; });
+        if(!fresh) list=S.matches[r]=swissPairs().map(function(p){return {a:p[0],b:p[1],winner:null};});
+      }
     }
     if(!list.length){
       var pend=document.createElement("div"); pend.className="match";
       pend.innerHTML='<div class="meta">Awaiting Round '+(r-1)+' results…</div>';
       card.appendChild(pend);
     } else {
-      list.forEach(function(m){ card.appendChild(matchEl(m,{bo:"Bo1"})); });
+      list.forEach(function(m){ card.appendChild(matchEl(m,{bo:"Bo1",dur:true})); });
     }
     hold.appendChild(card);
   }
+}
+function parseDur(v){
+  v=String(v).trim(); if(!v) return null;
+  var ci=v.indexOf(":");
+  if(ci>0){
+    var mm=+v.slice(0,ci), ss=+v.slice(ci+1);
+    if(isFinite(mm)&&isFinite(ss)&&mm>=0&&mm<120&&ss>=0&&ss<60) return mm*60+ss;
+    return null;
+  }
+  var s=+v; return isFinite(s)&&s>0&&s<7200?Math.round(s):null; // bare seconds
+}
+function fmtDur(sec){
+  if(!sec) return "";
+  var m=Math.floor(sec/60), s=sec%60;
+  return m+":"+(s<10?"0":"")+s;
 }
 function matchEl(m,opts){
   var el=document.createElement("div");
@@ -762,8 +781,17 @@ function matchEl(m,opts){
   row.appendChild(b1); row.appendChild(vs); row.appendChild(b2);
   el.appendChild(row);
   var meta=document.createElement("div"); meta.className="meta";
-  meta.textContent=(opts.bo||"")+(m.winner?" · winner: "+teamName(m.winner):"");
+  meta.textContent=(opts.bo||"")+(m.winner?" · winner: "+teamName(m.winner):"")+(m.dur?" · "+fmtDur(m.dur):"");
   el.appendChild(meta);
+  if(opts.dur&&IS_OP){
+    var drow=document.createElement("div"); drow.className="metarow";
+    var inp=document.createElement("input");
+    inp.type="text"; inp.size=6; inp.placeholder="⏱ mm:ss"; inp.value=m.dur?fmtDur(m.dur):"";
+    inp.title="Game duration (faster win / slower loss = stronger)";
+    inp.onchange=function(){ var d=parseDur(this.value); if(d){ m.dur=d; } else { delete m.dur; this.value=""; } render(); save(); };
+    drow.appendChild(inp);
+    el.appendChild(drow);
+  }
   return el;
 }
 function teamBtn(m,id){
@@ -801,10 +829,10 @@ function seriesEl(m,bo){
 function renderStandings(){
   var st=standings(), hold=$("standingsHold");
   var tbl=document.createElement("table");
-  tbl.innerHTML="<tr><th>#</th><th>Team</th><th>Div</th><th>W</th><th>Buch</th></tr>";
+  tbl.innerHTML="<tr><th>#</th><th>Team</th><th>Div</th><th>W</th><th>Buch</th><th>Eff</th></tr>";
   for(var i=0;i<st.arr.length;i++){
     var t=st.arr[i], tr=document.createElement("tr");
-    tr.innerHTML="<td class='rank'>"+(i+1)+"</td><td><b>"+t.name+"</b></td><td>"+t.div+"</td><td>"+st.R.w[t.id]+"</td><td>"+buch(t.id,st.R)+"</td>";
+    tr.innerHTML="<td class='rank'>"+(i+1)+"</td><td><b>"+t.name+"</b></td><td>"+t.div+"</td><td>"+st.R.w[t.id]+"</td><td>"+buch(t.id,st.R)+"</td>"+ (function(){ var e=netEff(t.id); var hasDur=(S.matches[1]||[]).concat(S.matches[2]||[],S.matches[3]||[]).some(function(m){return m&&m.winner&&m.dur&&(m.a===t.id||m.b===t.id);}); return hasDur?((e>0?"+":e<0?"-":"")+fmtDur(Math.abs(e))):"—"; })()+"</td>";
     if(i<3) tr.className="seeded";
     if(i>=4) tr.className="out";
     tbl.appendChild(tr);
@@ -1338,6 +1366,12 @@ wireBracketControls();
 render();
 FX.start();
 fbStart();
+window.__tracker={
+  getState:function(){return S;},
+  setState:function(x){S=normalize(x);},
+  swissPairs:swissPairs, records:records, netEff:netEff, standings:standings,
+  render:render, parseDur:parseDur, fmtDur:fmtDur
+};
 })();
 </script>
 </body>
