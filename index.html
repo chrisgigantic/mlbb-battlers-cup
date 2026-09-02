@@ -77,6 +77,15 @@
   .score.final{color:var(--accent)}
   .match .meta{font-size:.62rem;color:var(--muted);margin-top:4px}
   .match.done .meta{color:var(--ok)}
+  .match .metarow{margin-top:5px;text-align:center}
+  .match .metarow input{background:var(--card2);border:1px solid var(--border);border-radius:6px;
+    color:var(--fg);font-size:.68rem;font-weight:700;text-align:center;padding:2px 6px;width:64px;letter-spacing:.04em}
+  .match .metarow input::placeholder{color:var(--muted);font-weight:400}
+  .match .metarow input:focus{outline:none;border-color:var(--accent)}
+  td.dur,th.dur{text-align:center;color:var(--muted);font-weight:600;font-variant-numeric:tabular-nums}
+  td.dur.pos,tr.seeded td.dur.pos,td.dur.pos{color:var(--accent)}
+  td.dur.neg,tr td.dur.neg{color:#f87171}
+  td.num,th.num{text-align:center;font-variant-numeric:tabular-nums}
   /* standings */
   .standings{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;overflow-x:auto}
   table{width:100%;border-collapse:collapse;font-size:.82rem}
@@ -829,10 +838,14 @@ function seriesEl(m,bo){
 function renderStandings(){
   var st=standings(), hold=$("standingsHold");
   var tbl=document.createElement("table");
-  tbl.innerHTML="<tr><th>#</th><th>Team</th><th>Div</th><th>W</th><th>Buch</th><th>Eff</th></tr>";
+  tbl.innerHTML="<tr><th class='num'>#</th><th>Team</th><th>Div</th><th class='num'>W</th><th class='num'>Buch</th><th class='dur'>Eff</th></tr>";
   for(var i=0;i<st.arr.length;i++){
     var t=st.arr[i], tr=document.createElement("tr");
-    tr.innerHTML="<td class='rank'>"+(i+1)+"</td><td><b>"+t.name+"</b></td><td>"+t.div+"</td><td>"+st.R.w[t.id]+"</td><td>"+buch(t.id,st.R)+"</td>"+ (function(){ var e=netEff(t.id); var hasDur=(S.matches[1]||[]).concat(S.matches[2]||[],S.matches[3]||[]).some(function(m){return m&&m.winner&&m.dur&&(m.a===t.id||m.b===t.id);}); return hasDur?((e>0?"+":e<0?"-":"")+fmtDur(Math.abs(e))):"—"; })()+"</td>";
+    tr.innerHTML="<td class='rank'>"+(i+1)+"</td><td><b>"+t.name+"</b></td><td>"+t.div+"</td><td class='num'>"+st.R.w[t.id]+"</td><td class='num'>"+buch(t.id,st.R)+"</td>";
+    var _e=netEff(t.id),_h=(S.matches[1]||[]).concat(S.matches[2]||[],S.matches[3]||[]).some(function(m){return m&&m.winner&&m.dur&&(m.a===t.id||m.b===t.id);});
+    var _td=document.createElement("td"); _td.className="dur"+(_h?(_e>0?" pos":_e<0?" neg":""):"");
+    _td.textContent=_h?((_e>0?"+":_e<0?"-":"")+fmtDur(Math.abs(_e))):"—";
+    tr.appendChild(_td);
     if(i<3) tr.className="seeded";
     if(i>=4) tr.className="out";
     tbl.appendChild(tr);
